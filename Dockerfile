@@ -5,20 +5,26 @@ RUN apt-get update && \
     apt-get install -y \
     build-essential \
     libssl-dev \
-    mysql-server \
     libmysqld-dev \
     autoconf \
-    libtool
+    libtool \
+    libffi-dev
 
-ADD ./kbe/src kbengine/kbe/src
+ADD ./kbe kbengine/kbe
 
 # Build engine source
+RUN chmod -R 755 /kbengine/kbe
 WORKDIR /kbengine/kbe/src
-RUN chmod -R 755 .
 RUN make
 
 # Build Python interpreter
-WORKDIR /kbengine/src/lib/python
+WORKDIR /kbengine/kbe/src/lib/python
 RUN ./configure
 RUN make
 RUN make install
+
+RUN ulimit -c unlimited
+ADD server_assets /kbengine/server_assets
+RUN chmod 755 -R /kbengine/server_assets
+RUN chmod -R 755 /kbengine/server_assets
+WORKDIR /kbengine/server_assets
