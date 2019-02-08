@@ -1,10 +1,17 @@
 // Copyright 2008-2018 Yolo Technologies, Inc. All Rights Reserved. https://www.comblockengine.com
 
-#include "pyscript/copy.h"
+#include <stack>
+#include <future>
+#include <chrono>
+
+#include "common.h"
 #include "entitydef.h"
 #include "py_entitydef.h"
+#include "pyscript/py_platform.h"
 #include "pyscript/pyobject_pointer.h"
-#include <stack>
+#include "pyscript/script.h"
+#include "pyscript/copy.h"
+#include "resmgr/resmgr.h"
 
 namespace KBEngine{ namespace script{ namespace entitydef {
 
@@ -55,45 +62,175 @@ struct DefContext
 		propertyIndex = "";
 		propertyDefaultVal = "";
 
+		implementedByModuleName = "";
+		implementedByModuleFile = "";
+
 		inheritEngineModuleType = DC_TYPE_UNKNOWN;
 		type = DC_TYPE_UNKNOWN;
+
+		componentType = UNKNOWN_COMPONENT_TYPE;
 	}
 
-	std::string optionName;
+	bool addToStream(MemoryStream* pMemoryStream)
+	{
+		(*pMemoryStream) << optionName;
+		(*pMemoryStream) << moduleName;
+		(*pMemoryStream) << attrName;
+		(*pMemoryStream) << methodArgs;
+		(*pMemoryStream) << returnType;
 
-	std::string moduleName;
-	std::string attrName;
-	std::string methodArgs;
-	std::string returnType;
+		(*pMemoryStream) << (int)argsvecs.size();
+		std::vector< std::string >::iterator argsvecsIter = argsvecs.begin();
+		for(; argsvecsIter != argsvecs.end(); ++argsvecsIter)
+			(*pMemoryStream) << (*argsvecsIter);
 
-	std::vector< std::string > argsvecs;
-	std::map< std::string, std::string > annotationsMaps;
+		(*pMemoryStream) << (int)annotationsMaps.size();
+		std::map< std::string, std::string >::iterator annotationsMapsIter = annotationsMaps.begin();
+		for (; annotationsMapsIter != annotationsMaps.end(); ++annotationsMapsIter)
+			(*pMemoryStream) << annotationsMapsIter->first << annotationsMapsIter->second;
 
-	bool isModuleScope;
+		(*pMemoryStream) << isModuleScope;
+		(*pMemoryStream) << exposed;
+		(*pMemoryStream) << hasClient;
 
-	bool exposed;
-	bool hasClient;
+		(*pMemoryStream) << persistent;
+		(*pMemoryStream) << databaseLength;
 
-	// -1：未设置， 0：false， 1：true
-	int persistent;
+		(*pMemoryStream) << propertyFlags;
+		(*pMemoryStream) << propertyIndex;
+		(*pMemoryStream) << propertyDefaultVal;
 
-	int databaseLength;
+		(*pMemoryStream) << implementedByModuleName;
+		(*pMemoryStream) << implementedByModuleFile;
 
-	std::string propertyFlags;
-	std::string propertyIndex;
-	std::string propertyDefaultVal;
+		(*pMemoryStream) << (int)baseClasses.size();
+		std::vector< std::string >::iterator baseClassesIter = baseClasses.begin();
+		for (; baseClassesIter != baseClasses.end(); ++baseClassesIter)
+			(*pMemoryStream) << (*baseClassesIter);
 
-	PyObjectPtr implementedBy;
+		(*pMemoryStream) << (int)inheritEngineModuleType;
+		(*pMemoryStream) << (int)type;
 
-	std::vector< std::string > baseClasses;
+		(*pMemoryStream) << (int)methods.size();
+		std::vector< DefContext >::iterator methodsIter = methods.begin();
+		for (; methodsIter != methods.end(); ++methodsIter)
+			(*methodsIter).addToStream(pMemoryStream);
 
-	DCType inheritEngineModuleType;
-	DCType type;
+		(*pMemoryStream) << (int)clienbt_methods.size();
+		std::vector< DefContext >::iterator clienbt_methodsIter = clienbt_methods.begin();
+		for (; clienbt_methodsIter != clienbt_methods.end(); ++clienbt_methodsIter)
+			(*clienbt_methodsIter).addToStream(pMemoryStream);
 
-	std::vector< DefContext > methods;
-	std::vector< DefContext > clienbt_methods;
-	std::vector< DefContext > propertys;
-	std::vector< std::string > components;
+		(*pMemoryStream) << (int)propertys.size();
+		std::vector< DefContext >::iterator propertysIter = propertys.begin();
+		for (; propertysIter != propertys.end(); ++propertysIter)
+			(*propertysIter).addToStream(pMemoryStream);
+
+		(*pMemoryStream) << (int)components.size();
+		std::vector< std::string >::iterator componentsIter = components.begin();
+		for (; componentsIter != components.end(); ++componentsIter)
+			(*pMemoryStream) << (*componentsIter);
+
+		return true;
+	}
+
+	bool createFromStream(MemoryStream* pMemoryStream)
+	{
+		(*pMemoryStream) >> optionName;
+		(*pMemoryStream) >> moduleName;
+		(*pMemoryStream) >> attrName;
+		(*pMemoryStream) >> methodArgs;
+		(*pMemoryStream) >> returnType;
+
+		int size = 0;
+
+		(*pMemoryStream) >> size;
+		for (int i = 0; i < size; ++i)
+		{
+			std::string str;
+			(*pMemoryStream) >> str;
+
+			argsvecs.push_back(str);
+		}
+
+		(*pMemoryStream) >> size;
+		for (int i = 0; i < size; ++i)
+		{
+			std::string key, val;
+			(*pMemoryStream) >> key >> val;
+
+			annotationsMaps[key] = val;
+		}
+
+		(*pMemoryStream) >> isModuleScope;
+		(*pMemoryStream) >> exposed;
+		(*pMemoryStream) >> hasClient;
+
+		(*pMemoryStream) >> persistent;
+		(*pMemoryStream) >> databaseLength;
+
+		(*pMemoryStream) >> propertyFlags;
+		(*pMemoryStream) >> propertyIndex;
+		(*pMemoryStream) >> propertyDefaultVal;
+
+		(*pMemoryStream) >> implementedByModuleName;
+		(*pMemoryStream) >> implementedByModuleFile;
+
+		(*pMemoryStream) >> size;
+		for (int i = 0; i < size; ++i)
+		{
+			std::string str;
+			(*pMemoryStream) >> str;
+
+			baseClasses.push_back(str);
+		}
+
+		int t_inheritEngineModuleType;
+		(*pMemoryStream) >> t_inheritEngineModuleType;
+		inheritEngineModuleType = (DCType)t_inheritEngineModuleType;
+
+		int t_type;
+		(*pMemoryStream) >> t_type;
+		type = (DCType)t_type;
+
+		(*pMemoryStream) >> size;
+		for (int i = 0; i < size; ++i)
+		{
+			DefContext dc;
+			dc.createFromStream(pMemoryStream);
+
+			methods.push_back(dc);
+		}
+
+		(*pMemoryStream) >> size;
+		for (int i = 0; i < size; ++i)
+		{
+			DefContext dc;
+			dc.createFromStream(pMemoryStream);
+
+			clienbt_methods.push_back(dc);
+		}
+
+		(*pMemoryStream) >> size;
+		for (int i = 0; i < size; ++i)
+		{
+			DefContext dc;
+			dc.createFromStream(pMemoryStream);
+
+			propertys.push_back(dc);
+		}
+
+		(*pMemoryStream) >> size;
+		for (int i = 0; i < size; ++i)
+		{
+			std::string str;
+			(*pMemoryStream) >> str;
+
+			components.push_back(str);
+		}
+
+		return true;
+	}
 
 	bool addChildContext(DefContext& defContext)
 	{
@@ -127,6 +264,48 @@ struct DefContext
 		pContexts->push_back(defContext);
 		return true;
 	}
+
+	std::string optionName;
+
+	std::string moduleName;
+	std::string attrName;
+	std::string methodArgs;
+	std::string returnType;
+
+	std::vector< std::string > argsvecs;
+	std::map< std::string, std::string > annotationsMaps;
+
+	bool isModuleScope;
+
+	bool exposed;
+	bool hasClient;
+
+	// -1：未设置， 0：false， 1：true
+	int persistent;
+
+	int databaseLength;
+
+	std::string propertyFlags;
+	std::string propertyIndex;
+	std::string propertyDefaultVal;
+
+	PyObjectPtr implementedBy;
+	std::string implementedByModuleName;
+	std::string implementedByModuleFile;
+
+	PyObjectPtr pyObjectPtr;
+
+	std::vector< std::string > baseClasses;
+
+	DCType inheritEngineModuleType;
+	DCType type;
+
+	std::vector< DefContext > methods;
+	std::vector< DefContext > clienbt_methods;
+	std::vector< DefContext > propertys;
+	std::vector< std::string > components;
+
+	COMPONENT_TYPE componentType;
 };
 
 static std::stack<CallContext> g_callContexts;
@@ -134,6 +313,8 @@ static std::string pyDefModuleName = "";
 
 typedef std::map<std::string, DefContext> DEF_CONTEXT_MAP;
 static DEF_CONTEXT_MAP g_allScriptDefContextMaps;
+
+static bool g_inited = false;
 
 //-------------------------------------------------------------------------------------
 static bool assemblyContexts(bool notfoundModuleError = false)
@@ -357,6 +538,19 @@ static PyObject* __py_def_parse(PyObject *self, PyObject* args)
 	DefContext defContext;
 	defContext.optionName = cc.optionName;
 
+	PyObject* kbeModule = PyImport_AddModule("KBEngine");
+	KBE_ASSERT(kbeModule);
+
+	PyObject* pyComponentName = PyObject_GetAttrString(kbeModule, "component");
+	if (!pyComponentName)
+	{
+		PyErr_Format(PyExc_AssertionError, "Def.__py_def_call(): get KBEngine.component error!\n");
+		PY_RETURN_ERROR;
+	}
+
+	defContext.componentType = ComponentName2ComponentType(PyUnicode_AsUTF8AndSize(pyComponentName, NULL));
+	Py_DECREF(pyComponentName);
+
 	if (!args || PyTuple_Size(args) < 1)
 	{
 		PyErr_Format(PyExc_AssertionError, "Def.__py_def_call(Def.%s): error!\n", defContext.optionName.c_str());
@@ -373,6 +567,8 @@ static PyObject* __py_def_parse(PyObject *self, PyObject* args)
 
 	const char* moduleQualname = PyUnicode_AsUTF8AndSize(pyModuleQualname, NULL);
 	Py_DECREF(pyModuleQualname);
+
+	defContext.pyObjectPtr = PyObjectPtr(pyFunc);
 
 	if (defContext.optionName == "method")
 	{
@@ -543,14 +739,61 @@ static PyObject* __py_def_parse(PyObject *self, PyObject* args)
 			}
 			else
 			{
-				PyObject* pyQualname = PyObject_GetAttrString(pImplementedBy, "__qualname__");
-				if (!pyQualname)
+				defContext.implementedBy = pImplementedBy;
+			}
+
+			PyObject* pyQualname = PyObject_GetAttrString(defContext.implementedBy.get(), "__qualname__");
+			if (!pyQualname)
+			{
+				PY_RETURN_ERROR;
+			}
+
+			defContext.implementedByModuleName = PyUnicode_AsUTF8AndSize(pyQualname, NULL);
+			Py_DECREF(pyQualname);
+
+			PyObject* pyInspectModule =
+				PyImport_ImportModule(const_cast<char*>("inspect"));
+
+			PyObject* pyGetsourcefile = NULL;
+			if (pyInspectModule)
+			{
+				pyGetsourcefile =
+					PyObject_GetAttrString(pyInspectModule, const_cast<char *>("getsourcefile"));
+
+				Py_DECREF(pyInspectModule);
+			}
+			else
+			{
+				PY_RETURN_ERROR;
+			}
+
+			if (pyGetsourcefile)
+			{
+				PyObject* pyFile = PyObject_CallFunction(pyGetsourcefile,
+					const_cast<char*>("(O)"), defContext.implementedBy.get());
+
+				Py_DECREF(pyGetsourcefile);
+
+				if (!pyFile)
 				{
 					PY_RETURN_ERROR;
 				}
-
-				defContext.implementedBy = pImplementedBy;
-				Py_DECREF(pyQualname);
+				else
+				{
+					// 防止不同系统造成的路径不一致，剔除系统相关路径
+					defContext.implementedByModuleFile = PyUnicode_AsUTF8AndSize(pyFile, NULL);
+					strutil::kbe_replace(defContext.implementedByModuleFile, "/", "");
+					strutil::kbe_replace(defContext.implementedByModuleFile, "\\", "");
+					std::string kbe_root = Resmgr::getSingleton().getPyUserScriptsPath();
+					strutil::kbe_replace(kbe_root, "/", "");
+					strutil::kbe_replace(kbe_root, "\\", "");
+					strutil::kbe_replace(defContext.implementedByModuleFile, kbe_root, "");
+					Py_DECREF(pyFile);
+				}
+			}
+			else
+			{
+				PY_RETURN_ERROR;
 			}
 		}
 	}
@@ -611,10 +854,10 @@ static PyObject* __py_def_parse(PyObject *self, PyObject* args)
 		PyObject* pyGetfullargspec = NULL;
 		if (pyInspectModule)
 		{
-			Py_DECREF(pyInspectModule);
-
 			pyGetfullargspec =
 				PyObject_GetAttrString(pyInspectModule, const_cast<char *>("getfullargspec"));
+
+			Py_DECREF(pyInspectModule);
 		}
 		else
 		{
@@ -709,6 +952,10 @@ static PyObject* __py_def_parse(PyObject *self, PyObject* args)
 						defContext.annotationsMaps[skey] = svalue;
 				}
 			}
+		}
+		else
+		{
+			PY_RETURN_ERROR;
 		}
 	}
 	else
@@ -837,62 +1084,62 @@ static PyMethodDef __call_def_parse = { "_PyEntityDefParse", (PyCFunction)&__py_
 	}
 
 static PyObject* __py_def_rename(PyObject* self, PyObject* args, PyObject* kwargs)
-	{
-		CallContext cc;
-		cc.pyArgs = PyObjectPtr(Copy::deepcopy(args));
-		cc.pyKwargs = kwargs ? PyObjectPtr(Copy::deepcopy(kwargs)) : PyObjectPtr(NULL);
-		cc.optionName = "rename";
+{
+	CallContext cc;
+	cc.pyArgs = PyObjectPtr(Copy::deepcopy(args));
+	cc.pyKwargs = kwargs ? PyObjectPtr(Copy::deepcopy(kwargs)) : PyObjectPtr(NULL);
+	cc.optionName = "rename";
 		
-		Py_XDECREF(cc.pyArgs.get());
-		Py_XDECREF(cc.pyKwargs.get());
+	Py_XDECREF(cc.pyArgs.get());
+	Py_XDECREF(cc.pyKwargs.get());
 
-		// 类似这种定义方式 Def.rename(ENTITY_ID=int)
-		if (kwargs)
-		{
-			PyObject *key, *value;
-			Py_ssize_t pos = 0;
+	// 类似这种定义方式 Def.rename(ENTITY_ID=int)
+	if (kwargs)
+	{
+		PyObject *key, *value;
+		Py_ssize_t pos = 0;
 
-			while (PyDict_Next(kwargs, &pos, &key, &value)) {
-				if (!PyType_Check(value))
-				{
-					PyErr_Format(PyExc_AssertionError, "Def.%s: arg2 not legal type! such as: Def.rename(ENTITY_ID=int)\n", cc.optionName.c_str());
-					return NULL;
-				}
-
-				PyObject* pyQualname = PyObject_GetAttrString(value, "__qualname__");
-				if (!pyQualname)
-				{
-					PyErr_Format(PyExc_AssertionError, "Def.%s: arg2 get __qualname__ error! such as: Def.rename(ENTITY_ID=int)\n", cc.optionName.c_str());
-					return NULL;
-				}
-
-				std::string typeName = PyUnicode_AsUTF8AndSize(pyQualname, NULL);
-				Py_DECREF(pyQualname);
-
-				if (!PyUnicode_Check(key))
-				{
-					PyErr_Format(PyExc_AssertionError, "Def.%s: arg1 must be a string! such as: Def.rename(ENTITY_ID=int)\n", cc.optionName.c_str());
-					return NULL;
-				}
-
-				DefContext defContext;
-				defContext.optionName = cc.optionName;
-				defContext.moduleName = PyUnicode_AsUTF8AndSize(key, NULL);
-				defContext.returnType = typeName;
-
-				if (!onDefRename(defContext))
-					return NULL;
+		while (PyDict_Next(kwargs, &pos, &key, &value)) {
+			if (!PyType_Check(value))
+			{
+				PyErr_Format(PyExc_AssertionError, "Def.%s: arg2 not legal type! such as: Def.rename(ENTITY_ID=int)\n", cc.optionName.c_str());
+				return NULL;
 			}
 
-			S_Return;
+			PyObject* pyQualname = PyObject_GetAttrString(value, "__qualname__");
+			if (!pyQualname)
+			{
+				PyErr_Format(PyExc_AssertionError, "Def.%s: arg2 get __qualname__ error! such as: Def.rename(ENTITY_ID=int)\n", cc.optionName.c_str());
+				return NULL;
+			}
+
+			std::string typeName = PyUnicode_AsUTF8AndSize(pyQualname, NULL);
+			Py_DECREF(pyQualname);
+
+			if (!PyUnicode_Check(key))
+			{
+				PyErr_Format(PyExc_AssertionError, "Def.%s: arg1 must be a string! such as: Def.rename(ENTITY_ID=int)\n", cc.optionName.c_str());
+				return NULL;
+			}
+
+			DefContext defContext;
+			defContext.optionName = cc.optionName;
+			defContext.moduleName = PyUnicode_AsUTF8AndSize(key, NULL);
+			defContext.returnType = typeName;
+
+			if (!onDefRename(defContext))
+				return NULL;
 		}
 
-		g_callContexts.push(cc);
-
-		// @Def.rename()
-		// def ENTITY_ID() -> int: pass
-		return PyCFunction_New(&__call_def_parse, self);
+		S_Return;
 	}
+
+	g_callContexts.push(cc);
+
+	// @Def.rename()
+	// def ENTITY_ID() -> int: pass
+	return PyCFunction_New(&__call_def_parse, self);
+}
 
 #define PY_ADD_METHOD(NAME, DOCS) APPEND_SCRIPT_MODULE_METHOD(entitydefModule, NAME, __py_def_##NAME, METH_VARARGS | METH_KEYWORDS, 0);
 
@@ -945,9 +1192,292 @@ bool uninstallModule()
 }
 
 //-------------------------------------------------------------------------------------
-bool initialize(std::vector<PyTypeObject*>& scriptBaseTypes,
-	COMPONENT_TYPE loadComponentType)
+static bool loadAllScriptForComponentType(COMPONENT_TYPE loadComponentType)
 {
+	std::string rootPath = Resmgr::getSingleton().getPyUserComponentScriptsPath(loadComponentType);
+
+	if (rootPath.size() == 0)
+	{
+		ERROR_MSG(fmt::format("PyEntityDef::loadAllScriptForComponentType(): get scripts path error! loadComponentType={}\n", 
+			COMPONENT_NAME_EX(loadComponentType)));
+
+		return false;
+	}
+
+	while (rootPath[rootPath.size() - 1] == '/' || rootPath[rootPath.size() - 1] == '\\') rootPath.pop_back();
+
+	wchar_t* wpath = strutil::char2wchar((rootPath).c_str());
+	std::vector<std::wstring> results;
+	Resmgr::getSingleton().listPathRes(wpath, L"py|pyc", results);
+
+	std::vector<std::wstring>::iterator iter = results.begin();
+	for (; iter != results.end(); ++iter)
+	{
+		std::wstring wstrpath = (*iter);
+
+		if (wstrpath.find(L"__pycache__") != std::wstring::npos)
+			continue;
+
+		if (wstrpath.find(L"__init__.") != std::wstring::npos)
+			continue;
+
+		std::pair<std::wstring, std::wstring> pathPair = script::PyPlatform::splitPath(wstrpath);
+		std::pair<std::wstring, std::wstring> filePair = script::PyPlatform::splitText(pathPair.second);
+
+		if (filePair.first.size() == 0)
+			continue;
+
+		char* cpacketPath = strutil::wchar2char(pathPair.first.c_str());
+		std::string packetPath = cpacketPath;
+		free(cpacketPath);
+
+		strutil::kbe_replace(packetPath, rootPath, "");
+		while (packetPath.size() > 0 && (packetPath[0] == '/' || packetPath[0] == '\\')) packetPath.erase(0, 1);
+		strutil::kbe_replace(packetPath, "/", ".");
+		strutil::kbe_replace(packetPath, "\\", ".");
+
+		char* moduleName = strutil::wchar2char(filePair.first.c_str());
+
+		// 由于脚本内部可能会import造成重复import， 我们过滤已经import过的模块
+		if (g_allScriptDefContextMaps.find(moduleName) == g_allScriptDefContextMaps.end())
+		{
+			PyObject* pyModule = NULL;
+
+			if (packetPath.size() == 0 || packetPath == "components" || packetPath == "interfaces")
+			{
+				pyModule = PyImport_ImportModule(const_cast<char*>(moduleName));
+			}
+			else
+			{
+				pyModule = PyImport_ImportModule(const_cast<char*>((packetPath + "." + moduleName).c_str()));
+			}
+
+			if (!pyModule)
+			{
+				SCRIPT_ERROR_CHECK();
+				return false;
+			}
+			else
+			{
+				Py_DECREF(pyModule);
+			}
+		}
+
+		free(moduleName);
+	}
+
+	free(wpath);
+	return true;
+}
+
+//-------------------------------------------------------------------------------------
+class Entity : public script::ScriptObject
+{
+	BASE_SCRIPT_HREADER(Entity, ScriptObject)
+public:
+	Entity(PyTypeObject* pyType = getScriptType(), bool isInitialised = true):
+		ScriptObject(pyType, isInitialised) {}
+	~Entity() {}
+};
+
+SCRIPT_METHOD_DECLARE_BEGIN(Entity)
+SCRIPT_METHOD_DECLARE_END()
+
+SCRIPT_MEMBER_DECLARE_BEGIN(Entity)
+SCRIPT_MEMBER_DECLARE_END()
+
+SCRIPT_GETSET_DECLARE_BEGIN(Entity)
+SCRIPT_GETSET_DECLARE_END()
+BASE_SCRIPT_INIT(Entity, 0, 0, 0, 0, 0)
+
+class Proxy : public script::ScriptObject
+{
+	BASE_SCRIPT_HREADER(Proxy, ScriptObject)
+public:
+	Proxy(PyTypeObject* pyType = getScriptType(), bool isInitialised = true) :
+		ScriptObject(pyType, isInitialised) {}
+	~Proxy() {}
+};
+
+SCRIPT_METHOD_DECLARE_BEGIN(Proxy)
+SCRIPT_METHOD_DECLARE_END()
+
+SCRIPT_MEMBER_DECLARE_BEGIN(Proxy)
+SCRIPT_MEMBER_DECLARE_END()
+
+SCRIPT_GETSET_DECLARE_BEGIN(Proxy)
+SCRIPT_GETSET_DECLARE_END()
+BASE_SCRIPT_INIT(Proxy, 0, 0, 0, 0, 0)
+
+class EntityComponent : public script::ScriptObject
+{
+	BASE_SCRIPT_HREADER(EntityComponent, ScriptObject)
+public:
+	EntityComponent(PyTypeObject* pyType = getScriptType(), bool isInitialised = true) :
+		ScriptObject(pyType, isInitialised) {}
+	~EntityComponent() {}
+};
+
+SCRIPT_METHOD_DECLARE_BEGIN(EntityComponent)
+SCRIPT_METHOD_DECLARE_END()
+
+SCRIPT_MEMBER_DECLARE_BEGIN(EntityComponent)
+SCRIPT_MEMBER_DECLARE_END()
+
+SCRIPT_GETSET_DECLARE_BEGIN(EntityComponent)
+SCRIPT_GETSET_DECLARE_END()
+BASE_SCRIPT_INIT(EntityComponent, 0, 0, 0, 0, 0)
+
+static bool execPython(COMPONENT_TYPE componentType)
+{
+	std::pair<std::wstring, std::wstring> pyPaths = getComponentPythonPaths(componentType);
+	if (pyPaths.first.size() == 0)
+	{
+		ERROR_MSG(fmt::format("PyEntityDef::execPython(): PythonApp({}) paths error!\n", COMPONENT_NAME_EX(componentType)));
+		return false;
+	}
+
+	APPEND_PYSYSPATH(pyPaths.second);
+
+	PyObject* modulesOld = PySys_GetObject("modules");
+
+	PyThreadState* pCurInterpreter = PyThreadState_Get();
+	PyThreadState* pNewInterpreter = Py_NewInterpreter();
+
+	if (!pNewInterpreter)
+	{
+		ERROR_MSG(fmt::format("PyEntityDef::execPython(): Py_NewInterpreter()!\n"));
+		SCRIPT_ERROR_CHECK();
+		return false;
+	}
+
+	PySys_SetPath(pyPaths.second.c_str());
+
+	PyObject* modulesNew = PySys_GetObject("modules");
+	PyDict_Merge(modulesNew, Script::getSingleton().getSysInitModules(), 0);
+
+	{
+		PyObject *key, *value;
+		Py_ssize_t pos = 0;
+
+		while (PyDict_Next(modulesOld, &pos, &key, &value))
+		{
+			const char* typeName = PyUnicode_AsUTF8AndSize(key, NULL);
+
+			if (std::string(typeName) == "KBEngine")
+				continue;
+
+			PyObject* pyDoc = PyObject_GetAttrString(value, "__doc__");
+
+			if (pyDoc)
+			{
+				const char* doc = PyUnicode_AsUTF8AndSize(pyDoc, NULL);
+
+				if (doc && std::string(doc).find("KBEngine") != std::string::npos)
+					PyDict_SetItemString(modulesNew, typeName, value);
+
+				if (PyErr_Occurred())
+					PyErr_Clear();
+
+				Py_XDECREF(pyDoc);
+			}
+			else
+			{
+				SCRIPT_ERROR_CHECK();
+			}
+		}
+	}
+
+	PyObject *m = PyImport_AddModule("__main__");
+
+	// 添加一个脚本基础模块
+	PyObject* kbeModule = PyImport_AddModule("KBEngine");
+	KBE_ASSERT(kbeModule);
+
+	Entity::installScript(kbeModule);
+	EntityComponent::installScript(kbeModule);
+
+	if (componentType == BASEAPP_TYPE)
+		Proxy::installScript(kbeModule);
+
+	const char* componentName = COMPONENT_NAME_EX(componentType);
+	if (PyModule_AddStringConstant(kbeModule, "component", componentName))
+	{
+		ERROR_MSG(fmt::format("PyEntityDef::execPython(): Unable to set KBEngine.component to {}\n",
+			componentName));
+
+		return false;
+	}
+
+	// 将模块对象加入main
+	PyObject_SetAttrString(m, "KBEngine", kbeModule);
+
+	if (pNewInterpreter != PyThreadState_Swap(pCurInterpreter))
+	{
+		KBE_ASSERT(false);
+		return false;
+	}
+
+	PyThreadState_Swap(pNewInterpreter);
+
+	bool otherPartSuccess = loadAllScriptForComponentType(componentType);
+
+	Entity::uninstallScript();
+	EntityComponent::uninstallScript();
+
+	if (componentType == BASEAPP_TYPE)
+		Proxy::uninstallScript();
+
+	if (pNewInterpreter != PyThreadState_Swap(pCurInterpreter))
+	{
+		KBE_ASSERT(false);
+		return false;
+	}
+
+	// 此处不能使用Py_EndInterpreter，会导致Math、Def等模块析构
+	PyInterpreterState_Clear(pNewInterpreter->interp);
+	PyInterpreterState_Delete(pNewInterpreter->interp);
+	return otherPartSuccess;
+}
+
+//-------------------------------------------------------------------------------------
+static bool loadAllScripts()
+{
+	std::vector< COMPONENT_TYPE > loadOtherComponentTypes;
+
+	if (g_componentType == CELLAPP_TYPE || g_componentType == BASEAPP_TYPE)
+	{
+		bool otherPartSuccess = loadAllScriptForComponentType(g_componentType);
+		if (!otherPartSuccess)
+			return false;
+
+		loadOtherComponentTypes.push_back((g_componentType == BASEAPP_TYPE) ? CELLAPP_TYPE : BASEAPP_TYPE);
+	}
+	else
+	{
+		loadOtherComponentTypes.push_back(BASEAPP_TYPE);
+		loadOtherComponentTypes.push_back(CELLAPP_TYPE);
+	}
+
+	for (std::vector< COMPONENT_TYPE >::iterator iter = loadOtherComponentTypes.begin(); iter != loadOtherComponentTypes.end(); ++iter)
+	{
+		COMPONENT_TYPE componentType = (*iter);
+		
+		if (!execPython(componentType))
+			return false;
+	}
+
+	return true;
+}
+
+//-------------------------------------------------------------------------------------
+bool initialize()
+{
+	if (g_inited)
+		return false;
+
+	g_inited = true;
+
 	PyObject *entitydefModule = PyImport_AddModule(pyDefModuleName.c_str());
 
 	ENTITYFLAGMAP::iterator iter = g_entityFlagMapping.begin();
@@ -989,6 +1519,23 @@ bool initialize(std::vector<PyTypeObject*>& scriptBaseTypes,
 		return false;
 	}
 
+	if (!loadAllScripts())
+	{
+		SCRIPT_ERROR_CHECK();
+		return false;
+	}
+
+	if (!assemblyContexts(true))
+	{
+		SCRIPT_ERROR_CHECK();
+		return false;
+	}
+
+	while (!g_callContexts.empty())
+		g_callContexts.pop();
+
+	g_allScriptDefContextMaps.clear();
+
 	return true;
 }
 
@@ -1010,32 +1557,44 @@ bool initializeWatcher()
 }
 
 //-------------------------------------------------------------------------------------
-static bool loadAllScripts()
+bool addToStream(MemoryStream* pMemoryStream)
 {
+	int size = g_allScriptDefContextMaps.size();
+	(*pMemoryStream) << size;
+
+	DEF_CONTEXT_MAP::iterator iter = g_allScriptDefContextMaps.begin();
+	for (; iter != g_allScriptDefContextMaps.end(); ++iter)
+	{
+		const std::string& name = iter->first;
+		DefContext& defContext = iter->second;
+
+		(*pMemoryStream) << name;
+
+		defContext.addToStream(pMemoryStream);
+	}
+
 	return true;
 }
 
 //-------------------------------------------------------------------------------------
-bool process()
+bool createFromStream(MemoryStream* pMemoryStream)
 {
-	if (!loadAllScripts())
+	int size = 0;
+	(*pMemoryStream) >> size;
+
+	for (int i = 0; i < size; ++i)
 	{
-		SCRIPT_ERROR_CHECK();
-		return false;
+		std::string name = "";
+		(*pMemoryStream) >> name;
+
+		DefContext defContext;
+		defContext.createFromStream(pMemoryStream);
 	}
 
-	if (!assemblyContexts(true))
-	{
-		SCRIPT_ERROR_CHECK();
-		return false;
-	}
-
-	while (!g_callContexts.empty()) 
-		g_callContexts.pop();
-
-	g_allScriptDefContextMaps.clear();
 	return true;
 }
+
+//-------------------------------------------------------------------------------------
 
 }
 }
