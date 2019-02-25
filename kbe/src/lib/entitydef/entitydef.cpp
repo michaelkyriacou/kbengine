@@ -227,13 +227,15 @@ bool EntityDef::initialize(std::vector<PyTypeObject*>& scriptBaseTypes,
 	}
 	XML_FOR_END(node);
 
+	if (!script::entitydef::initialize())
+		return false;
+
 	EntityDef::md5().final();
 
 	if(loadComponentType == DBMGR_TYPE)
 		return true;
 
-	return script::entitydef::initialize() && 
-		loadAllEntityScriptModules(__entitiesPath, scriptBaseTypes) &&
+	return loadAllEntityScriptModules(__entitiesPath, scriptBaseTypes) &&
 		initializeWatcher();
 }
 
@@ -574,7 +576,7 @@ bool EntityDef::loadComponents(const std::string& defFilePath,
 		if (!componentNode)
 			continue;
 
-		if (!validDefPropertyName(pScriptModule, componentName))
+		if (!validDefPropertyName(componentName))
 		{
 			ERROR_MSG(fmt::format("EntityDef::loadComponents: '{}' is limited, in module({})!\n",
 				componentName, moduleName));
@@ -656,8 +658,8 @@ bool EntityDef::loadComponents(const std::string& defFilePath,
 					flags |= (ED_FLAG_ALL_CLIENTS | ED_FLAG_CELL_PUBLIC_AND_OWN | ED_FLAG_OTHER_CLIENTS | ED_FLAG_OWN_CLIENT);
 			}
 
-			g_logComponentPropertys[pScriptModule->getName()].push_back(addComponentProperty(futype, componentTypeName, componentName, flags, isPersistent, isIdentifier,
-				indexType, databaseLength, defaultStr, detailLevel, pScriptModule, pCompScriptDefModule));
+			addComponentProperty(futype, componentTypeName, componentName, flags, isPersistent, isIdentifier,
+				indexType, databaseLength, defaultStr, detailLevel, pScriptModule, pCompScriptDefModule);
 
 			pScriptModule->addComponentDescription(componentName.c_str(), pCompScriptDefModule);
 			continue;
@@ -724,8 +726,8 @@ bool EntityDef::loadComponents(const std::string& defFilePath,
 				flags |= (ED_FLAG_ALL_CLIENTS | ED_FLAG_CELL_PUBLIC_AND_OWN | ED_FLAG_OTHER_CLIENTS | ED_FLAG_OWN_CLIENT);
 		}
 
-		g_logComponentPropertys[pScriptModule->getName()].push_back(addComponentProperty(futype, componentTypeName, componentName, flags, isPersistent, isIdentifier,
-			indexType, databaseLength, defaultStr, detailLevel, pScriptModule, pCompScriptDefModule));
+		addComponentProperty(futype, componentTypeName, componentName, flags, isPersistent, isIdentifier,
+			indexType, databaseLength, defaultStr, detailLevel, pScriptModule, pCompScriptDefModule);
 
 		pScriptModule->addComponentDescription(componentName.c_str(), pCompScriptDefModule);
 	}
@@ -799,6 +801,7 @@ PropertyDescription* EntityDef::addComponentProperty(ENTITY_PROPERTY_UID utype,
 		return NULL;
 	}
 
+	g_logComponentPropertys[pScriptModule->getName()].push_back(propertyDescription);
 	return propertyDescription;
 }
 
@@ -880,7 +883,7 @@ bool EntityDef::loadAllDefDescriptions(const std::string& moduleName,
 }
 
 //-------------------------------------------------------------------------------------
-bool EntityDef::validDefPropertyName(ScriptDefModule* pScriptModule, const std::string& name)
+bool EntityDef::validDefPropertyName(const std::string& name)
 {
 	int i = 0;
 
@@ -1039,7 +1042,7 @@ bool EntityDef::loadDefPropertys(const std::string& moduleName,
 			std::string					name = "";
 
 			name = xml->getKey(defPropertyNode);
-			if(!validDefPropertyName(pScriptModule, name))
+			if(!validDefPropertyName(name))
 			{
 				ERROR_MSG(fmt::format("EntityDef::loadDefPropertys: '{}' is limited, in module({})!\n", 
 					name, moduleName));

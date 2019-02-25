@@ -1864,6 +1864,34 @@ bool ClientSDKUnity::writeEntityProcessMessagesMethod(ScriptDefModule* pEntitySc
 
 		sourcefileBody_ += "\t\t}\n";
 
+		sourcefileBody_ += fmt::format("\n\t\tpublic override void onComponentsEnterworld()\n\t\t{{\n");
+		propIter = clientPropertys.begin();
+		for (; propIter != clientPropertys.end(); ++propIter)
+		{
+			PropertyDescription* pPropertyDescription = propIter->second;
+
+			if (pPropertyDescription->getDataType()->type() != DATA_TYPE_ENTITY_COMPONENT)
+				continue;
+
+			sourcefileBody_ += fmt::format("\t\t\t{}.onEnterworld();\n", pPropertyDescription->getName());
+		}
+
+		sourcefileBody_ += "\t\t}\n";
+
+		sourcefileBody_ += fmt::format("\n\t\tpublic override void onComponentsLeaveworld()\n\t\t{{\n");
+		propIter = clientPropertys.begin();
+		for (; propIter != clientPropertys.end(); ++propIter)
+		{
+			PropertyDescription* pPropertyDescription = propIter->second;
+
+			if (pPropertyDescription->getDataType()->type() != DATA_TYPE_ENTITY_COMPONENT)
+				continue;
+
+			sourcefileBody_ += fmt::format("\t\t\t{}.onLeaveworld();\n", pPropertyDescription->getName());
+		}
+
+		sourcefileBody_ += "\t\t}\n";
+
 		sourcefileBody_ += fmt::format("\n\t\tpublic override void onGetBase()\n\t\t{{\n");
 		sourcefileBody_ += fmt::format("\t\t\tbaseEntityCall = new EntityBaseEntityCall_{}(id, className);\n", newModuleName);
 		sourcefileBody_ += "\t\t}\n";
@@ -1938,9 +1966,17 @@ bool ClientSDKUnity::writeEntityProcessMessagesMethod(ScriptDefModule* pEntitySc
 		sourcefileBody_ += fmt::format("\t\t\tUInt16 methodUtype = 0;\n");
 		sourcefileBody_ += fmt::format("\t\t\tUInt16 componentPropertyUType = 0;\n\n");
 
-		sourcefileBody_ += fmt::format("\t\t\tif(sm.useMethodDescrAlias)\n");
+		sourcefileBody_ += fmt::format("\t\t\tif(sm.usePropertyDescrAlias)\n");
 		sourcefileBody_ += fmt::format("\t\t\t{{\n");
 		sourcefileBody_ += fmt::format("\t\t\t\tcomponentPropertyUType = stream.readUint8();\n");
+		sourcefileBody_ += fmt::format("\t\t\t}}\n");
+		sourcefileBody_ += fmt::format("\t\t\telse\n");
+		sourcefileBody_ += fmt::format("\t\t\t{{\n");
+		sourcefileBody_ += fmt::format("\t\t\t\tcomponentPropertyUType = stream.readUint16();\n");
+		sourcefileBody_ += fmt::format("\t\t\t}}\n\n");
+
+		sourcefileBody_ += fmt::format("\t\t\tif(sm.useMethodDescrAlias)\n");
+		sourcefileBody_ += fmt::format("\t\t\t{{\n");
 		sourcefileBody_ += fmt::format("\t\t\t\tmethodUtype = stream.readUint8();\n");
 
 		bool foundComponentNoUseMethodDescrAlias = false;
@@ -2003,7 +2039,6 @@ bool ClientSDKUnity::writeEntityProcessMessagesMethod(ScriptDefModule* pEntitySc
 		sourcefileBody_ += fmt::format("\t\t\t}}\n");
 		sourcefileBody_ += fmt::format("\t\t\telse\n");
 		sourcefileBody_ += fmt::format("\t\t\t{{\n");
-		sourcefileBody_ += fmt::format("\t\t\t\tcomponentPropertyUType = stream.readUint16();\n");
 		sourcefileBody_ += fmt::format("\t\t\t\tmethodUtype = stream.readUint16();\n");
 		sourcefileBody_ += fmt::format("\t\t\t}}\n\n");
 
