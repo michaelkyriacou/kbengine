@@ -677,7 +677,7 @@ void Entity::onDefDataChanged(EntityComponent* pEntityComponent, const PropertyD
 	// 首先创建一个需要广播的模板流
 	MemoryStream* mstream = MemoryStream::createPoolObject(OBJECTPOOL_POINT);
 
-	EntityDef::context().currComponentType = g_componentType;
+	EntityDef::context().currComponentType = CLIENT_TYPE;
 	propertyDescription->getDataType()->addToStream(mstream, pyData);
 
 	// 判断是否需要广播给其他的cellapp, 这还需一个前提是entity必须拥有ghost实体
@@ -693,7 +693,19 @@ void Entity::onDefDataChanged(EntityComponent* pEntityComponent, const PropertyD
 			(*pForwardBundle) << componentPropertyUID;
 			(*pForwardBundle) << propertyDescription->getUType();
 
-			pForwardBundle->append(*mstream);
+			// 如果是组件属性，则需要将组件内部的服务器相关可广播属性打包
+			if (propertyDescription->getDataType()->type() == DATA_TYPE_ENTITY_COMPONENT)
+			{
+				MemoryStream* server_mstream = MemoryStream::createPoolObject(OBJECTPOOL_POINT);
+				EntityDef::context().currComponentType = g_componentType;
+				propertyDescription->getDataType()->addToStream(server_mstream, pyData);
+				pForwardBundle->append(*server_mstream);
+				MemoryStream::reclaimPoolObject(server_mstream);
+			}
+			else
+			{
+				pForwardBundle->append(*mstream);
+			}
 
 			// 记录这个事件产生的数据量大小
 			g_publicCellEventHistoryStats.trackEvent(scriptName(), 
@@ -1475,7 +1487,13 @@ void Entity::addWitnessed(Entity* entity)
 //-------------------------------------------------------------------------------------
 void Entity::delWitnessed(Entity* entity)
 {
-	KBE_ASSERT(witnesses_count_ > 0);
+	if (witnesses_count_ == 0)
+	{
+		ERROR_MSG(fmt::format("{}::delWitnessed({}): witness is empty!\n",
+			scriptName(), id()));
+
+		return;
+	}
 
 	witnesses_.remove(entity->id());
 	--witnesses_count_;
@@ -2088,6 +2106,39 @@ void Entity::onGetWitness(bool fromBase)
 			clientEntityCall(client);
 		}
 
+		// 如果一个实体已经有cell的情况下giveToClient，那么需要将最新的客户端属性值更新到客户端
+		Network::Bundle* pSendBundle = Network::Bundle::createPoolObject(OBJECTPOOL_POINT);
+		NETWORK_ENTITY_MESSAGE_FORWARD_CLIENT_BEGIN(id(), (*pSendBundle));
+
+		ENTITY_MESSAGE_FORWARD_CLIENT_BEGIN(pSendBundle, ClientInterface::onUpdatePropertys, updatePropertys);
+		MemoryStream* s1 = MemoryStream::createPoolObject(OBJECTPOOL_POINT);
+		(*pSendBundle) << id();
+
+		ENTITY_PROPERTY_UID spaceuid = ENTITY_BASE_PROPERTY_UTYPE_SPACEID;
+
+		Network::FixedMessages::MSGInfo* msgInfo =
+			Network::FixedMessages::getSingleton().isFixed("Property::spaceID");
+
+		if (msgInfo != NULL)
+			spaceuid = msgInfo->msgid;
+
+		if (pScriptModule()->usePropertyDescrAlias())
+		{
+			uint8 aliasID = ENTITY_BASE_PROPERTY_ALIASID_SPACEID;
+			(*s1) << (uint8)0 << aliasID << this->spaceID();
+		}
+		else
+		{
+			(*s1) << (ENTITY_PROPERTY_UID)0 << spaceuid << this->spaceID();
+		}
+
+		addClientDataToStream(s1);
+		(*pSendBundle).append(*s1);
+		MemoryStream::reclaimPoolObject(s1);
+		ENTITY_MESSAGE_FORWARD_CLIENT_END(pSendBundle, ClientInterface::onUpdatePropertys, updatePropertys);
+
+		clientEntityCall()->sendCall(pSendBundle);
+
 		if(pWitness_ == NULL)
 		{
 			setWitness(Witness::createPoolObject(OBJECTPOOL_POINT));
@@ -2123,42 +2174,6 @@ void Entity::onGetWitness(bool fromBase)
 	{
 		SCOPED_PROFILE(SCRIPTCALL_PROFILE);
 		CALL_ENTITY_AND_COMPONENTS_METHOD(this, SCRIPT_OBJECT_CALL_ARGS0(pyTempObj, const_cast<char*>("onGetWitness"), GETERR));
-	}
-	
-	// 如果一个实体已经有cell的情况下giveToClient，那么需要将最新的客户端属性值更新到客户端
-	if(fromBase)
-	{
-		Network::Bundle* pSendBundle = Network::Bundle::createPoolObject(OBJECTPOOL_POINT);
-		NETWORK_ENTITY_MESSAGE_FORWARD_CLIENT_BEGIN(id(), (*pSendBundle));
-		
-		ENTITY_MESSAGE_FORWARD_CLIENT_BEGIN(pSendBundle, ClientInterface::onUpdatePropertys, updatePropertys);
-		MemoryStream* s1 = MemoryStream::createPoolObject(OBJECTPOOL_POINT);
-		(*pSendBundle) << id();
-		
-		ENTITY_PROPERTY_UID spaceuid = ENTITY_BASE_PROPERTY_UTYPE_SPACEID;
-
-		Network::FixedMessages::MSGInfo* msgInfo = 
-			Network::FixedMessages::getSingleton().isFixed("Property::spaceID");
-
-		if(msgInfo != NULL)
-			spaceuid = msgInfo->msgid;
-		
-		if(pScriptModule()->usePropertyDescrAlias())
-		{
-			uint8 aliasID = ENTITY_BASE_PROPERTY_ALIASID_SPACEID;
-			(*s1) << (uint8)0 << aliasID << this->spaceID();
-		}
-		else
-		{
-			(*s1) << (ENTITY_PROPERTY_UID)0 << spaceuid << this->spaceID();
-		}
-
-		addClientDataToStream(s1);
-		(*pSendBundle).append(*s1);
-		MemoryStream::reclaimPoolObject(s1);
-		ENTITY_MESSAGE_FORWARD_CLIENT_END(pSendBundle, ClientInterface::onUpdatePropertys, updatePropertys);
-		
-		clientEntityCall()->sendCall(pSendBundle);
 	}
 
 	Py_DECREF(this);
@@ -4343,11 +4358,26 @@ void Entity::addEventsToStream(KBEngine::MemoryStream& s)
 
 			const char* ccattr = PyUnicode_AsUTF8AndSize(pyObj, NULL);
 
-			char *pClass;
-			char *pMethod;
+			const char *pClass = NULL;
+			const char *pMethod = NULL;
 
-			pClass = strtok(const_cast<char*>(ccattr), ".");
-			pMethod = strtok(NULL, ".");
+			std::vector<std::string>  vec;
+			std::string str(ccattr);
+			strutil::kbe_split(str, '.', vec);
+
+			if (vec.size() == 1)
+			{
+				pMethod = vec[0].c_str();
+			}
+			else if (vec.size() == 2)
+			{
+				pClass = vec[0].c_str();
+				pMethod = vec[1].c_str();
+			}
+			else
+			{
+				pMethod = ccattr;
+			}
 
 			ScriptDefModule* pScriptDefModule = EntityDef::findScriptModule(pClass);
 
@@ -4424,7 +4454,7 @@ void Entity::createEventsFromStream(KBEngine::MemoryStream& s)
 			std::string callbackName;
 			s >> callbackName;
 
-			if (eventName == "None")
+			if (callbackName == "None")
 				continue;
 
 			std::vector<std::string> callBackNameVec;
