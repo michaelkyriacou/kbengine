@@ -128,6 +128,8 @@ ifndef DISABLE_WATCHERS
 CPPFLAGS += -DENABLE_WATCHERS
 endif
 
+CPPFLAGS += -Wno-format-truncation
+
 ifdef USE_PYTHON
 USE_KBE_PYTHON = 1
 KBE_INCLUDES += -I $(KBE_ROOT)/kbe/src/lib/python/Include
